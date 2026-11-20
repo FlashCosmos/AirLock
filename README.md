@@ -1,44 +1,55 @@
 # Airlock
 
-Lets Claude Code open, start and close Claude tabs in VS Code, so a session can hand off to a new
-one ("finish this, start the next task in a new tab, close this tab").
+A small VS Code extension that lets Claude Code open, close and list its own Claude tabs, so a
+session can hand off to new ones: "finish this, start the next task in a new tab, close this tab",
+or "start a Game session and an Art session and let them talk to each other".
+
+## How a handoff works
+
+1. Claude asks Airlock to open a blank Claude tab.
+2. Claude finds the new tab's session with `ListAgents` (it's the one new, idle row named after the
+   workspace folder) and sends it a self-contained brief with `SendMessage`. The tab is now a normal,
+   live session that other sessions can message by name.
+3. Repeat one tab at a time, then tell each new session the others' names.
+4. Finally Claude asks Airlock to close its own tab.
+
+Airlock does the tab work; the briefing uses Claude Code's built-in cross-session messaging.
+
+## Install
+
+Works on Windows, macOS and Linux. Requires the Claude Code VS Code extension; the Claude Code CLI
+does not need to be installed separately.
+
+- Local: download `airlock-<version>.vsix` from Releases, then Extensions view → `...` → Install from
+  VSIX → pick it, then reload the window.
+- Remote-SSH: Airlock runs where the workspace lives, so also install it on each remote host: in a
+  connected window, Extensions view → `...` → Install from VSIX.
+
+Then add the snippet below to `~/.claude/CLAUDE.md`, so Claude knows to use it.
+
+Log: command palette → "Airlock: Show Log".
+
+## Requests
 
 Claude drops a JSON file in `~/.claude/airlock/requests/`; the VS Code window whose workspace
 contains `cwd` acts on it and writes the result to `~/.claude/airlock/responses/<same name>.json`.
 
 ```json
-{ "action": "start", "cwd": "/path/to/workspace", "prompt": "<task>", "open": true }
 { "action": "open",  "cwd": "/path/to/workspace", "session": "<id, optional>", "prompt": "<text, optional>" }
 { "action": "close", "cwd": "/path/to/workspace", "session": "<id>" }
 { "action": "list",  "cwd": "/path/to/workspace" }
+{ "action": "start", "cwd": "/path/to/workspace", "prompt": "<task>", "open": true }
 ```
 
-- `start` (one-shot, not recommended for handoffs) runs a new Claude session in the background and returns its `session` id; with
-  `"open": true` it also opens that session in a tab. It uses the Claude CLI bundled inside the
-  Claude Code extension, so no separate Claude Code install is needed. Output is logged to
-  `~/.claude/airlock/runs/`.
-- `open` only pre-fills `prompt`; it never sends it. To get a task running, brief the tab with `SendMessage` (see below).
+- `open` with no `session` opens a blank tab; with `session` it opens or focuses that conversation.
+  `prompt` only pre-fills the input box; it is never sent.
 - `close` reveals that session's tab and closes it, and only ever closes Claude conversation tabs.
   A session's own id is in `$CLAUDE_CODE_SESSION_ID`.
-- Every response lists the open tabs. Requests older than 60 s are ignored.
-
-## Install
-
-Works on Windows, macOS and Linux. Requires the Claude Code VS Code extension.
-
-- Local: download `airlock-<version>.vsix` (see Releases), then Extensions view → `...` → Install from VSIX → pick it, then reload.
-- Remote-SSH: Airlock runs where the workspace lives, so also install it on each remote host:
-  in a connected window, Extensions view → `...` → Install from VSIX.
-
-Log: command palette → "Airlock: Show Log".
-
-## Recommended handoff flow
-
-Don't use `start` for handoffs: it runs a one-shot headless session, and with `"open": true` the tab can
-open before the session is ready and come up blank. Instead, open a blank tab with Airlock, find it with
-Claude Code's `ListAgents`, and brief it with `SendMessage`. The new tab then becomes a normal, live session
-that other sessions can message by name. Open and brief one tab at a time, so each brief goes to the
-right tab, and never resend a brief.
+- `list` returns the open tabs. Every response includes them too.
+- `start` runs a one-shot headless session (with the Claude CLI bundled in the Claude Code extension)
+  and returns its `session` id; output goes to `~/.claude/airlock/runs/`. Don't use it for handoffs:
+  the session ends after one reply, and with `"open": true` the tab can open blank.
+- Requests older than 60 s are ignored.
 
 ## Telling Claude about it
 

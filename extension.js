@@ -1,11 +1,11 @@
 // Airlock
 // Polls ~/.claude/airlock/requests/*.json and performs one of these actions:
-//   { "action": "start", "cwd": "<folder>", "prompt": "<task>", "open": true? }
-//       runs a new Claude session in the background (Claude CLI bundled with the
-//       Claude Code extension; no separate install needed) and optionally opens it in a tab
 //   { "action": "open",  "cwd": "<folder>", "session": "<id>"?, "prompt": "<text>"? }
 //   { "action": "close", "cwd": "<folder>", "session": "<id>" }
 //   { "action": "list",  "cwd": "<folder>" }
+//   { "action": "start", "cwd": "<folder>", "prompt": "<task>", "open": true? }
+//       one-shot headless run with the Claude CLI bundled in the Claude Code extension.
+//       Not for handoffs: open a blank tab and brief it with SendMessage instead (see README).
 // Only the VS Code window whose workspace contains `cwd` claims a request.
 // "close" only ever closes a Claude Code conversation tab (webview claudeVSCodePanel).
 // The result is written to ~/.claude/airlock/responses/<same name>.json.

@@ -1,7 +1,7 @@
 {
   "name": "airlock",
   "displayName": "Airlock",
-  "description": "Lets Claude Code start, open and close Claude tabs (request files in ~/.claude/airlock).",
+  "description": "Lets Claude Code open, close and list its Claude tabs in VS Code, so sessions can hand off to new tabs.",
   "version": "0.1.2",
   "publisher": "airlock",
   "license": "UNLICENSED",
