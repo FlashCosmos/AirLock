@@ -2,19 +2,33 @@
   "name": "airlock",
   "displayName": "Airlock",
   "description": "Lets Claude Code open, close and list its Claude tabs in VS Code, so sessions can hand off to new tabs.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "airlock",
   "license": "UNLICENSED",
   "private": true,
-  "engines": { "vscode": "^1.90.0" },
-  "extensionKind": ["workspace"],
-  "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./extension.js",
   "contributes": {
     "commands": [
-      { "command": "airlock.showLog", "title": "Airlock: Show Log" }
+      {
+        "command": "airlock.showLog",
+        "title": "Airlock: Show Log"
+      }
     ]
   },
-  "repository": { "type": "git", "url": "https://github.com/FlashCosmos/AirLock" }
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FlashCosmos/AirLock"
+  }
 }

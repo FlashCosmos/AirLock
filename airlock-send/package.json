@@ -1,0 +1,15 @@
+{
+  "name": "airlock-send",
+  "displayName": "Airlock Send",
+  "description": "Companion to Airlock: presses the Send button in a new Claude tab, on the machine where VS Code's window is (works in Remote-SSH and tunnel windows).",
+  "version": "0.1.3",
+  "publisher": "airlock",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": { "vscode": "^1.90.0" },
+  "extensionKind": ["ui"],
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "repository": { "type": "git", "url": "https://github.com/FlashCosmos/AirLock" }
+}

@@ -1,8 +1,12 @@
 // Airlock
 // Polls ~/.claude/airlock/requests/*.json and performs one of these actions:
-//   { "action": "open",  "cwd": "<folder>", "session": "<id>"?, "prompt": "<text>"? }
+//   { "action": "open",  "cwd": "<folder>", "session": "<id>"?, "prompt": "<text>"?, "send": true? }
+//       with "send": true and a prompt, the companion "Airlock Send" presses Send in the new tab.
 //   { "action": "close", "cwd": "<folder>", "session": "<id>" }
 //   { "action": "list",  "cwd": "<folder>" }
+//   { "action": "title", "cwd": "<folder>", "session": "<id>", "name": "<title>" }
+//       names the session in Claude's session history; Airlock keeps the title line near the end
+//       of the transcript so the history keeps finding it.
 //   { "action": "start", "cwd": "<folder>", "prompt": "<task>", "open": true? }
 //       one-shot headless run with the Claude CLI bundled in the Claude Code extension.
 //       Not for handoffs: open a blank tab and brief it with SendMessage instead (see README).
@@ -58,9 +62,67 @@ function activeClaudeTab() {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function doOpen(req) {
+  if (req.send && req.prompt && !req.session) return doOpenAndSend(req);
   await vscode.commands.executeCommand('claude-vscode.primaryEditor.open', req.session || undefined, req.prompt || undefined);
   await sleep(1000);
   return { ok: true, tabs: listTabs() };
+}
+
+// Open a new Claude tab with `prompt` pre-filled, then have the "Airlock Send" companion press its
+// Send button. The companion runs on the machine where the VS Code window is (also in Remote-SSH
+// and tunnel windows); the Claude extension itself has no auto-send, and keypresses don't reach it.
+async function pressSend(tabLabel) {
+  try {
+    const r = await vscode.commands.executeCommand('airlockSend.press', { tabLabel, workspaceName: vscode.workspace.name || '', sendLabel: 'Send message' });
+    return r || { sent: false, error: 'Airlock Send returned nothing' };
+  } catch (e) {
+    return { sent: false, error: 'Airlock Send companion not installed on this computer (' + String(e && e.message || e).slice(0, 120) + ')' };
+  }
+}
+
+function findNewSession(prompt, since) {
+  const snippet = JSON.stringify(prompt.slice(0, 60)).slice(1, -1);
+  const projects = path.join(os.homedir(), '.claude', 'projects');
+  let dirs = [];
+  try { dirs = fs.readdirSync(projects); } catch { return undefined; }
+  for (const d of dirs) {
+    let files = [];
+    try { files = fs.readdirSync(path.join(projects, d)).filter((f) => f.endsWith('.jsonl')); } catch { continue; }
+    for (const f of files) {
+      const full = path.join(projects, d, f);
+      try {
+        const st = fs.statSync(full);
+        if (st.mtimeMs < since) continue;
+        const fd = fs.openSync(full, 'r'); const buf = Buffer.alloc(Math.min(st.size, 262144));
+        try { fs.readSync(fd, buf, 0, buf.length, 0); } finally { fs.closeSync(fd); }
+        if (buf.toString('utf8').includes(snippet)) return f.slice(0, -6);
+      } catch {}
+    }
+  }
+  return undefined;
+}
+
+// Airlock Send registers its command only where it can press buttons (Windows), so this tells
+// Claude up front whether open+send will work in this window.
+async function autoSendAvailable() {
+  try { return (await vscode.commands.getCommands(true)).includes('airlockSend.press'); } catch { return false; }
+}
+
+async function doOpenAndSend(req) {
+  if (!(await autoSendAvailable())) {
+    return { ok: false, sent: false, autoSend: false, error: 'Airlock Send is not installed on this computer (or not supported on this OS); no tab was opened. Open a blank tab and brief it with SendMessage instead.', tabs: listTabs() };
+  }
+  const since = Date.now();
+  const before = new Set(claudeTabs());
+  await vscode.commands.executeCommand('claude-vscode.primaryEditor.open', undefined, req.prompt);
+  let tab;
+  for (let i = 0; i < 20 && !tab; i++) { await sleep(150); const t = activeClaudeTab(); if (t && !before.has(t)) tab = t; }
+  if (!tab) return { ok: false, sent: false, error: 'new tab did not become active; prompt left unsent', tabs: listTabs() };
+  const r = await pressSend(tab.label);
+  if (!r.sent) return { ok: true, sent: false, error: (r.error || 'not sent') + '; the prompt is typed in the new tab', tabs: listTabs() };
+  let session;
+  for (let i = 0; i < 30 && !session; i++) { await sleep(500); session = findNewSession(req.prompt, since); }
+  return { ok: true, sent: true, session, tabs: listTabs() };
 }
 
 // The Claude Code extension ships its own CLI binary; prefer it so users need no separate install.
@@ -144,7 +206,17 @@ async function doClose(req) {
 async function handle(file) {
   const full = path.join(REQ, file);
   let req;
-  try { req = JSON.parse(fs.readFileSync(full, 'utf8')); } catch { return; } // partially written; retry next tick
+  try { req = JSON.parse(fs.readFileSync(full, 'utf8')); } catch (e) {
+    // Maybe still being written: retry for a few seconds, then report it instead of retrying forever.
+    let age = 0;
+    try { age = Date.now() - fs.statSync(full).mtimeMs; } catch { return; }
+    if (age < 3000) return;
+    try { fs.unlinkSync(full); } catch { return; }
+    const error = 'invalid JSON (' + String(e && e.message || e).slice(0, 120) + '); on Windows, escape backslashes in cwd or use forward slashes';
+    try { fs.writeFileSync(path.join(RES, file), JSON.stringify({ ok: false, error, at: new Date().toISOString() })); } catch {}
+    log.appendLine(`${new Date().toISOString()} ${file} -> ${error}`);
+    return;
+  }
   if (!ownsCwd(req.cwd)) return; // another window's job
 
   // Claim atomically so two windows on the same folder can't both act.
@@ -158,7 +230,8 @@ async function handle(file) {
     else if (req.action === 'open') result = await doOpen(req);
     else if (req.action === 'close') result = await doClose(req);
     else if (req.action === 'start') result = await doStart(req);
-    else if (req.action === 'list') result = { ok: true, tabs: listTabs() };
+    else if (req.action === 'title') result = await doTitle(req);
+    else if (req.action === 'list') result = { ok: true, autoSend: await autoSendAvailable(), tabs: listTabs() };
     else result = { ok: false, error: 'unknown action: ' + req.action };
   } catch (e) {
     result = { ok: false, error: String(e && e.message || e) };
@@ -166,6 +239,73 @@ async function handle(file) {
   try { fs.unlinkSync(claimed); } catch {}
   try { fs.writeFileSync(path.join(RES, file), JSON.stringify({ ...result, action: req.action, at: new Date().toISOString() })); } catch {}
   log.appendLine(`${new Date().toISOString()} ${file} ${req.action} -> ${JSON.stringify(result)}`);
+}
+
+// Give a session a title in Claude's session history (and the iPhone/web app list).
+// The history only reads the start and end of each transcript, so the title line must stay near
+// the end of the file: Airlock re-appends it whenever the session has written past it.
+const TITLES = path.join(ROOT, 'titles.json');
+const TAIL_BYTES = 16 * 1024;
+const TITLE_TTL_MS = 7 * 24 * 3600 * 1000;
+
+function loadTitles() { try { return JSON.parse(fs.readFileSync(TITLES, 'utf8')); } catch { return {}; } }
+function saveTitles(t) { try { fs.writeFileSync(TITLES, JSON.stringify(t, null, 1)); } catch {} }
+
+function findTranscript(session) {
+  const projects = path.join(os.homedir(), '.claude', 'projects');
+  let dirs = [];
+  try { dirs = fs.readdirSync(projects); } catch { return undefined; }
+  for (const d of dirs) {
+    const f = path.join(projects, d, session + '.jsonl');
+    if (fs.existsSync(f)) return f;
+  }
+  return undefined;
+}
+
+function titleLine(session, name) {
+  return JSON.stringify({ type: 'custom-title', sessionId: session, customTitle: name }) + '\n';
+}
+
+function tailHasTitle(file, session, name) {
+  const st = fs.statSync(file);
+  const len = Math.min(st.size, TAIL_BYTES);
+  const buf = Buffer.alloc(len);
+  const fd = fs.openSync(file, 'r');
+  try { fs.readSync(fd, buf, 0, len, st.size - len); } finally { fs.closeSync(fd); }
+  return buf.toString('utf8').includes(titleLine(session, name).trim());
+}
+
+function ensureTitle(file, session, name) {
+  if (tailHasTitle(file, session, name)) return false;
+  fs.appendFileSync(file, titleLine(session, name));
+  return true;
+}
+
+async function doTitle(req) {
+  const name = String(req.name || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 80);
+  if (!/^[0-9a-f-]{36}$/i.test(String(req.session || '')) || !name) return { ok: false, error: 'title needs a session id and a name' };
+  const file = findTranscript(req.session);
+  if (!file) return { ok: false, error: 'no transcript found for that session yet' };
+  ensureTitle(file, req.session, name);
+  const titles = loadTitles();
+  titles[req.session] = { name, file, at: Date.now() };
+  saveTitles(titles);
+  return { ok: true, name, note: 'shows in the Session Manager after the next window reload; the open tab label does not change' };
+}
+
+function keepTitles() {
+  const titles = loadTitles();
+  let changed = false;
+  for (const [session, t] of Object.entries(titles)) {
+    try {
+      const st = fs.statSync(t.file);
+      if (Date.now() - st.mtimeMs > TITLE_TTL_MS) { delete titles[session]; changed = true; continue; }
+      if (t.mtime === st.mtimeMs) continue;
+      if (ensureTitle(t.file, session, t.name)) log.appendLine(`re-appended title "${t.name}" for ${session}`);
+      t.mtime = fs.statSync(t.file).mtimeMs; changed = true;
+    } catch { delete titles[session]; changed = true; }
+  }
+  if (changed) saveTitles(titles);
 }
 
 async function tick() {
@@ -182,9 +322,10 @@ function activate(context) {
   fs.mkdirSync(REQ, { recursive: true });
   fs.mkdirSync(RES, { recursive: true });
   const timer = setInterval(tick, POLL_MS);
+  const titleTimer = setInterval(() => { try { keepTitles(); } catch {} }, 15_000);
   context.subscriptions.push(
     log,
-    { dispose: () => clearInterval(timer) },
+    { dispose: () => { clearInterval(timer); clearInterval(titleTimer); } },
     vscode.commands.registerCommand('airlock.showLog', () => log.show())
   );
   log.appendLine(`active; watching ${REQ}`);
