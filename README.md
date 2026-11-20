@@ -13,11 +13,11 @@ contains `cwd` acts on it and writes the result to `~/.claude/airlock/responses/
 { "action": "list",  "cwd": "/path/to/workspace" }
 ```
 
-- `start` runs a new Claude session in the background and returns its `session` id; with
+- `start` (one-shot, not recommended for handoffs) runs a new Claude session in the background and returns its `session` id; with
   `"open": true` it also opens that session in a tab. It uses the Claude CLI bundled inside the
   Claude Code extension, so no separate Claude Code install is needed. Output is logged to
   `~/.claude/airlock/runs/`.
-- `open` only pre-fills `prompt`; it never sends it. Use `start` to have a task actually run.
+- `open` only pre-fills `prompt`; it never sends it. To get a task running, brief the tab with `SendMessage` (see below).
 - `close` reveals that session's tab and closes it, and only ever closes Claude conversation tabs.
   A session's own id is in `$CLAUDE_CODE_SESSION_ID`.
 - Every response lists the open tabs. Requests older than 60 s are ignored.
@@ -32,11 +32,13 @@ Works on Windows, macOS and Linux. Requires the Claude Code VS Code extension.
 
 Log: command palette → "Airlock: Show Log".
 
-## Known issue (0.1.2)
+## Recommended handoff flow
 
-`start` with `"open": true` can open the tab before the session is ready, giving a blank tab.
-Until that's fixed, start without `open`, wait until the run log contains a `"type":"assistant"`
-line, then send a separate `open` with the returned `session`. The instructions below already do this.
+Don't use `start` for handoffs: it runs a one-shot headless session, and with `"open": true` the tab can
+open before the session is ready and come up blank. Instead, open a blank tab with Airlock, find it with
+Claude Code's `ListAgents`, and brief it with `SendMessage`. The new tab then becomes a normal, live session
+that other sessions can message by name. Open and brief one tab at a time, so each brief goes to the
+right tab, and never resend a brief.
 
 ## Telling Claude about it
 
@@ -45,27 +47,35 @@ terminal instead, which just opens the CLI's first-run setup. Paste this into `~
 so every project picks it up (or into a single project's `CLAUDE.md`):
 
 ```markdown
-## Handing off to a new Claude tab in VS Code (Airlock)
+## Handing off to new Claude tabs in VS Code (Airlock)
 
-When asked to start a new session/tab, hand off to a new tab, or close this tab, use the Airlock VS Code extension.
-Do NOT launch `claude` in a terminal, use SendKeys, or open `vscode://` links: those don't work here.
+When asked to start a new session/tab, hand off to a new tab, or close this tab, use the Airlock VS Code extension
+plus cross-session messaging. Do NOT launch `claude` in a terminal, use SendKeys, open `vscode://` links, or use
+Airlock's `start` action (it runs a one-shot headless session and its tab opens blank).
 
-Airlock reads request files. Write JSON to `~/.claude/airlock/requests/<name>.json`, then poll for
-`~/.claude/airlock/responses/<name>.json` (usually under 2 s), read it and delete it. `cwd` must be this
-session's workspace folder.
+Airlock reads request files: write JSON to `~/.claude/airlock/requests/<name>.json`, then poll for
+`~/.claude/airlock/responses/<name>.json` (usually under 2 s), read it and delete it. `cwd` = this session's workspace folder.
 
-- Start a new session that actually runs a prompt:
-  `{"action":"start","cwd":"<workspace>","prompt":"<fully self-contained task>"}` → response has `session` and `log`.
-  Then wait until the run log (`log`, JSON lines) contains a line with `"type":"assistant"`, and only then open it:
-  `{"action":"open","cwd":"<workspace>","session":"<session>"}`.
-  (Don't use `"open": true` on start: in v0.1.2 the tab opens too early and comes up blank.)
-- Open a blank tab: `{"action":"open","cwd":"<workspace>"}`. A `prompt` field only pre-fills text; it is never sent.
-- Close a tab: `{"action":"close","cwd":"<workspace>","session":"<id>"}`. This session's own id is in
-  `$CLAUDE_CODE_SESSION_ID`. Close your own tab only as the very last step.
+To hand off to N new sessions, do this ONE SESSION AT A TIME:
+1. `ListAgents` and note every name.
+2. Open one blank tab: `{"action":"open","cwd":"<workspace>"}`. Wait ~5 s.
+3. `ListAgents` again. The new tab is the one row that wasn't there before: `interactive`, `idle`, started a few
+   seconds ago, name starting with the workspace folder name (e.g. `pet-simulator-3f`). If it isn't exactly one
+   new row, stop and ask the user. Never guess.
+4. `SendMessage` to that name with the full brief, ONCE. Never resend or "relay" a brief, and never message a
+   session you didn't just identify this way.
+5. Repeat for the next session. Once all are briefed, send each one a short note with the others' names so they
+   can message each other directly.
+
+The new session gets no context from this one, so its brief must stand on its own: what the project is, where
+things are, what was just finished, exactly what to do next, and who else to coordinate with.
+
+Other actions:
+- Close a tab: `{"action":"close","cwd":"<workspace>","session":"<session id>"}`. This session's own id is in
+  `$CLAUDE_CODE_SESSION_ID`. Close your own tab only as the very last step, after every brief has been sent.
 - List tabs: `{"action":"list","cwd":"<workspace>"}`. Every response also includes the open tabs.
 
-The new session gets no context from this one, so its prompt must stand on its own: what the project is,
-where things are, what was just finished, and exactly what to do next.
+Source and docs: https://github.com/FlashCosmos/AirLock
 ```
 
 A new session only reads `CLAUDE.md` at startup, so sessions already running won't see it until restarted.
