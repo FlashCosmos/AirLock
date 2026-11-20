@@ -1,0 +1,20 @@
+{
+  "name": "airlock",
+  "displayName": "Airlock",
+  "description": "Lets Claude Code start, open and close Claude tabs (request files in ~/.claude/airlock).",
+  "version": "0.1.2",
+  "publisher": "airlock",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": { "vscode": "^1.90.0" },
+  "extensionKind": ["workspace"],
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "airlock.showLog", "title": "Airlock: Show Log" }
+    ]
+  },
+  "repository": { "type": "git", "url": "https://github.com/FlashCosmos/AirLock" }
+}
